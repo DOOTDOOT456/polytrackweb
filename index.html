@@ -29,9 +29,10 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     return Array.from(new Uint8Array(b)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
   }
 
-  async function handle(path, query, method, body) {
+  async function handle(path0, query, method, body) {
+    // Game URLs have no leading slash (e.g. "leaderboard?...").
+    var p = "/" + path0.replace(/^\//, "");
     var q = new URLSearchParams(query || "");
-    var p = path;
     if (p === "/leaderboard" && method === "POST") {
       var f = new URLSearchParams(body || "");
       var version = f.get("version"), userToken = f.get("userToken"), name = f.get("name"),
@@ -63,7 +64,8 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       }
       var newPosition = await pos(frames, uploadId);
       if (prevBest) previousPosition = await pos(prevBest.frames, prevBest.id);
-      return { json: { uploadId: uploadId, previousPosition: previousPosition, newPosition: newPosition } };
+      // Game expects a bare JSON integer uploadId.
+      return { json: newPosition };
     }
     if (p === "/leaderboard") {
       var version = q.get("version"), trackId = q.get("trackId");
@@ -76,7 +78,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       all.forEach(function (r) { if (!best[r.token_hash]) { best[r.token_hash] = r; order.push(r); } });
       var total = order.length;
       var entries = order.slice(skip, skip + amount).map(function (r) {
-        return { id: r.id, userId: r.token_hash, name: r.name, frames: r.frames, carColors: r.car_colors };
+        return { id: r.id, userId: r.token_hash, name: r.name, frames: r.frames, carColors: r.car_colors, verifiedState: 1 };
       });
       var out = { total: total, entries: entries };
       var th = q.get("userTokenHash");
@@ -99,7 +101,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       })};
     }
     if (p === "/verifyRecordings" && method === "POST") return { text: "" };
-    if (p === "/user") {
+    if (p === "/user" || p === "/user?version") {
       var f = method === "POST" ? new URLSearchParams(body || "") : null;
       var userToken = f ? f.get("userToken") : q.get("userToken");
       if (!userToken) return { json: null };
