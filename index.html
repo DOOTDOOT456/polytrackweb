@@ -122,17 +122,22 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 
   if (OK) {
     // On-screen debug overlay (so logs are visible without devtools).
-    var dbg = document.createElement("div");
-    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;pointer-events:none;border-radius:4px";
-    dbg.textContent = "[PT shim debug]";
-    document.body.appendChild(dbg);
+    // Deferred: this script runs in <head> before document.body exists.
+    var dbg = null;
     window.ptLog = function (msg) {
+      if (!dbg) {
+        if (!document.body) return;
+        dbg = document.createElement("div");
+        dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;pointer-events:none;border-radius:4px";
+        dbg.textContent = "[PT shim debug]";
+        document.body.appendChild(dbg);
+      }
       var line = document.createElement("div");
       line.textContent = msg;
       dbg.appendChild(line);
       while (dbg.children.length > 12) dbg.removeChild(dbg.children[1]);
     };
-    window.ptLog("shim active -> " + SB);
+    document.addEventListener("DOMContentLoaded", function () { window.ptLog("shim active -> " + SB); });
     var of = window.fetch;
     window.fetch = async function (input, init) {
       var u = typeof input === "string" ? input : (input && input.url);
