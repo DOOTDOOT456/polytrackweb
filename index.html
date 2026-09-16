@@ -73,7 +73,8 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       var skip = Math.max(0, parseInt(q.get("skip") || "0", 10) || 0);
       var amount = Math.min(50, Math.max(1, parseInt(q.get("amount") || "10", 10) || 10));
       var te = encodeURIComponent(trackId);
-      var all = await sb("recordings?select=id,token_hash,name,frames,car_colors&version=eq." + version + "&track_id=eq." + te + (q.get("onlyVerified") === "true" ? "&verified_state=eq.1" : "") + "&order=frames.asc,id.asc");
+      // Ignore onlyVerified: this instance has no verifier, so all runs count.
+      var all = await sb("recordings?select=id,token_hash,name,frames,car_colors&version=eq." + version + "&track_id=eq." + te + "&order=frames.asc,id.asc");
       var best = {}, order = [];
       all.forEach(function (r) { if (!best[r.token_hash]) { best[r.token_hash] = r; order.push(r); } });
       var total = order.length;
