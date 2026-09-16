@@ -84,7 +84,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       var th = q.get("userTokenHash");
       if (th) {
         var idx = order.findIndex(function (r) { return r.token_hash === th; });
-        if (idx >= 0) out.userEntry = { position: idx, frames: order[idx].frames, id: null };
+        if (idx >= 0) out.userEntry = { position: idx + 1, frames: order[idx].frames, id: order[idx].id };
       }
       return { json: out };
     }
