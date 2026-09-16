@@ -129,10 +129,12 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
         var qi = rest.indexOf("?");
         var path = qi === -1 ? rest : rest.slice(0, qi);
         var query = qi === -1 ? "" : rest.slice(qi + 1);
-        var m = (init && init.method) || (typeof input !== "string" && input.method) || "GET";
+        var m2 = (init && init.method) || (typeof input !== "string" && input.method) || "GET";
         var body = init && init.body;
+        console.log("[PT shim] fetch", m2, path, query.slice(0, 120));
         try {
-          var parsed = await handle(path, query, m, body);
+          var parsed = await handle(path, query, m2, body);
+          console.log("[PT shim] fetch result", path, parsed ? (parsed.status || 200) : "passthrough");
           if (parsed) {
             var status = parsed.status || 200;
             if (parsed.json !== undefined)
@@ -161,7 +163,9 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
           var qi = rest.indexOf("?");
           var path = qi === -1 ? rest : rest.slice(0, qi);
           var query = qi === -1 ? "" : rest.slice(qi + 1);
+          console.log("[PT shim] xhr", method, path, body ? String(body).slice(0, 120) : "");
           handle(path, query, method, body).then(function (parsed) {
+            console.log("[PT shim] xhr result", path, parsed ? (parsed.status || 200) : "passthrough");
             if (parsed) {
               var status = parsed.status || 200;
               var text = parsed.json !== undefined ? JSON.stringify(parsed.json) : (parsed.text || "");
@@ -175,6 +179,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
             }
             realSend(body);
           }).catch(function (e) {
+            console.error("[PT shim] xhr error", path, String(e));
             Object.defineProperty(xhr, "readyState", { value: 4, writable: false });
             Object.defineProperty(xhr, "status", { value: 500, writable: false });
             Object.defineProperty(xhr, "responseText", { value: JSON.stringify({ error: String(e) }), writable: false });
