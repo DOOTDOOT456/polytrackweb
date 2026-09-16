@@ -1,1 +1,148 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"/><link href="forced_square.woff2" rel="preload" as="font" type="font/woff2" crossorigin="anonymous"/><link href="images/logo.svg" rel="preload" as="image" type="image/svg+xml"/><link rel="icon" href="images/icon.svg" type="image/svg+xml"/><meta content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no" name="viewport"/><script defer src="error_screen.bundle.js"></script><script defer src="main.bundle.js"></script></head><body><canvas id="screen"></canvas><div id="ui"></div><div id="transition-layer"></div></body></html>
+<!DOCTYPE html><html><head><meta charset="utf-8"/><link href="forced_square.woff2" rel="preload" as="font" type="font/woff2" crossorigin="anonymous"/><link href="images/logo.svg" rel="preload" as="image" type="image/svg+xml"/><link rel="icon" href="images/icon.svg" type="image/svg+xml"/><meta content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no" name="viewport"/><script>
+// PolyTrack leaderboard shim: the game calls the dead Kodub API
+// (https://snowy-mountain-8e34.htmlunblockedgames.workers.dev/...). We intercept
+// those requests and serve them from Supabase (PostgREST) instead.
+//
+// FILL THESE TWO IN with your Supabase project values (Dashboard -> Settings -> API):
+window.SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+window.SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
+(function () {
+  var DEAD = "https://snowy-mountain-8e34.htmlunblockedgames.workers.dev/";
+  var SB = window.SUPABASE_URL, KEY = window.SUPABASE_ANON_KEY;
+  var OK = SB && SB.indexOf("YOUR-PROJECT") === -1 && KEY && KEY.indexOf("YOUR-") === -1;
+
+  async function sb(path, opts) {
+    var r = await fetch(SB + "/rest/v1/" + path, {
+      method: opts && opts.method || "GET",
+      headers: {
+        apikey: KEY, Authorization: "Bearer " + KEY,
+        "Content-Type": "application/json", Prefer: (opts && opts.prefer) || ""
+      },
+      body: opts && opts.body
+    });
+    if (!r.ok) throw new Error("supabase " + r.status + ": " + (await r.text()));
+    return r.status === 204 ? null : r.json();
+  }
+
+  async function sha256Hex(s) {
+    var b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return Array.from(new Uint8Array(b)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  async function handle(path, query, method, body) {
+    var q = new URLSearchParams(query || "");
+    var p = path;
+    if (p === "/leaderboard" && method === "POST") {
+      var f = new URLSearchParams(body || "");
+      var version = f.get("version"), userToken = f.get("userToken"), name = f.get("name"),
+          carColors = f.get("carColors"), trackId = f.get("trackId"),
+          frames = parseInt(f.get("frames"), 10), recording = f.get("recording") || "";
+      if (!version || !userToken || !trackId || !Number.isSafeInteger(frames) ||
+          name.length < 1 || name.length > 50 || !carColors || recording.length === 0)
+        return new Response(JSON.stringify({ error: "bad request" }), { status: 400 });
+      var tokenHash = await sha256Hex(userToken);
+      var rows = await sb("recordings?select=id&version=eq." + version + "&track_id=eq." + encodeURIComponent(trackId) + "&token_hash=eq." + tokenHash);
+      var previousPosition = rows.length ? null : undefined;
+      var prevBest = null;
+      if (rows.length) {
+        var best = await sb("recordings?select=id,frames&version=eq." + version + "&track_id=eq." + encodeURIComponent(trackId) + "&token_hash=eq." + tokenHash + "&order=frames.asc,id.asc&limit=1");
+        prevBest = best[0] || null;
+      }
+      var ins = await sb("recordings", { method: "POST", prefer: "return=representation", body: JSON.stringify({
+        version: version, track_id: trackId, user_token: userToken, token_hash: tokenHash,
+        name: name, car_colors: carColors, frames: frames, recording: recording
+      })});
+      var uploadId = ins[0].id;
+      async function pos(fr, id) {
+        var b = await sb("recordings?select=id,frames,token_hash&version=eq." + version + "&track_id=eq." + encodeURIComponent(trackId) + "&order=frames.asc,id.asc", {});
+        var best = {};
+        b.forEach(function (r) { if (!best[r.token_hash]) best[r.token_hash] = r; });
+        var n = 0;
+        for (var k in best) { var x = best[k]; if (x.frames < fr || (x.frames === fr && x.id < id)) n++; }
+        return n;
+      }
+      var newPosition = await pos(frames, uploadId);
+      if (prevBest) previousPosition = await pos(prevBest.frames, prevBest.id);
+      return { json: { uploadId: uploadId, previousPosition: previousPosition, newPosition: newPosition } };
+    }
+    if (p === "/leaderboard") {
+      var version = q.get("version"), trackId = q.get("trackId");
+      if (!version || !trackId) return new Response(JSON.stringify({ error: "bad request" }), { status: 400 });
+      var skip = Math.max(0, parseInt(q.get("skip") || "0", 10) || 0);
+      var amount = Math.min(50, Math.max(1, parseInt(q.get("amount") || "10", 10) || 10));
+      var te = encodeURIComponent(trackId);
+      var all = await sb("recordings?select=id,token_hash,name,frames,car_colors&version=eq." + version + "&track_id=eq." + te + (q.get("onlyVerified") === "true" ? "&verified_state=eq.1" : "") + "&order=frames.asc,id.asc");
+      var best = {}, order = [];
+      all.forEach(function (r) { if (!best[r.token_hash]) { best[r.token_hash] = r; order.push(r); } });
+      var total = order.length;
+      var entries = order.slice(skip, skip + amount).map(function (r) {
+        return { id: r.id, userId: r.token_hash, name: r.name, frames: r.frames, carColors: r.car_colors };
+      });
+      var out = { total: total, entries: entries };
+      var th = q.get("userTokenHash");
+      if (th) {
+        var idx = order.findIndex(function (r) { return r.token_hash === th; });
+        if (idx >= 0) out.userEntry = { position: idx, frames: order[idx].frames, id: null };
+      }
+      return { json: out };
+    }
+    if (p === "/recordings") {
+      var version = q.get("version");
+      var ids = (q.get("recordingIds") || "").split(",").map(function (s) { return parseInt(s, 10); })
+        .filter(Number.isSafeInteger).slice(0, 50);
+      if (!ids.length) return { json: [] };
+      var rows = await sb("recordings?select=id,recording,verified_state,frames,car_colors&id=in.(" + ids.join(",") + ")");
+      var byId = {}; rows.forEach(function (r) { byId[r.id] = r; });
+      return { json: ids.map(function (id) {
+        var r = byId[id];
+        return r ? { recording: r.recording, verifiedState: r.verified_state, frames: r.frames, carColors: r.car_colors } : null;
+      })};
+    }
+    if (p === "/verifyRecordings" && method === "POST") return { text: "" };
+    if (p === "/user") {
+      var f = method === "POST" ? new URLSearchParams(body || "") : null;
+      var userToken = f ? f.get("userToken") : q.get("userToken");
+      if (!userToken) return { json: null };
+      var tokenHash = await sha256Hex(userToken);
+      if (method === "POST") {
+        var name = f.get("name"), carColors = f.get("carColors");
+        if (!name || name.length < 1 || name.length > 50 || !carColors) return { status: 400, text: "bad request" };
+        var ex = await sb("users?select=user_token&user_token=eq." + userToken);
+        if (ex.length) await sb("users?user_token=eq." + userToken, { method: "PATCH", body: JSON.stringify({ name: name, car_colors: carColors }) });
+        else await sb("users", { method: "POST", body: JSON.stringify({ user_token: userToken, token_hash: tokenHash, name: name, car_colors: carColors }) });
+        return { text: "" };
+      }
+      var rows = await sb("users?select=name,car_colors&user_token=eq." + userToken);
+      return { json: rows.length ? { name: rows[0].name, carColors: rows[0].car_colors, isVerifier: false } : null };
+    }
+    return null;
+  }
+
+  if (OK) {
+    var of = window.fetch;
+    window.fetch = async function (input, init) {
+      var u = typeof input === "string" ? input : (input && input.url);
+      if (typeof u === "string" && u.indexOf(DEAD) === 0) {
+        var rest = u.slice(DEAD.length);
+        var qi = rest.indexOf("?");
+        var path = qi === -1 ? rest : rest.slice(0, qi);
+        var query = qi === -1 ? "" : rest.slice(qi + 1);
+        var m = (init && init.method) || (typeof input !== "string" && input.method) || "GET";
+        var body = init && init.body;
+        try {
+          var parsed = await handle(path, query, m, body);
+          if (parsed) {
+            var status = parsed.status || 200;
+            if (parsed.json !== undefined)
+              return new Response(JSON.stringify(parsed.json), { status: status, headers: { "Content-Type": "application/json" } });
+            return new Response(parsed.text || "", { status: status });
+          }
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { "Content-Type": "application/json" } });
+        }
+      }
+      return of.call(window, input, init);
+    };
+  }
+})();
+</script><script defer src="error_screen.bundle.js"></script><script defer src="main.bundle.js"></script></head><body><canvas id="screen"></canvas><div id="ui"></div><div id="transition-layer"></div></body></html>
