@@ -121,6 +121,18 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
   }
 
   if (OK) {
+    // On-screen debug overlay (so logs are visible without devtools).
+    var dbg = document.createElement("div");
+    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;pointer-events:none;border-radius:4px";
+    dbg.textContent = "[PT shim debug]";
+    document.body.appendChild(dbg);
+    window.ptLog = function (msg) {
+      var line = document.createElement("div");
+      line.textContent = msg;
+      dbg.appendChild(line);
+      while (dbg.children.length > 12) dbg.removeChild(dbg.children[1]);
+    };
+    window.ptLog("shim active -> " + SB);
     var of = window.fetch;
     window.fetch = async function (input, init) {
       var u = typeof input === "string" ? input : (input && input.url);
@@ -132,9 +144,11 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
         var m2 = (init && init.method) || (typeof input !== "string" && input.method) || "GET";
         var body = init && init.body;
         console.log("[PT shim] fetch", m2, path, query.slice(0, 120));
+        window.ptLog && ptLog("fetch " + m2 + " " + path);
         try {
           var parsed = await handle(path, query, m2, body);
           console.log("[PT shim] fetch result", path, parsed ? (parsed.status || 200) : "passthrough");
+          window.ptLog && ptLog("  -> " + (parsed ? (parsed.status || 200) : "passthrough"));
           if (parsed) {
             var status = parsed.status || 200;
             if (parsed.json !== undefined)
@@ -164,8 +178,10 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
           var path = qi === -1 ? rest : rest.slice(0, qi);
           var query = qi === -1 ? "" : rest.slice(qi + 1);
           console.log("[PT shim] xhr", method, path, body ? String(body).slice(0, 120) : "");
+          window.ptLog && ptLog("xhr " + method + " " + path);
           handle(path, query, method, body).then(function (parsed) {
             console.log("[PT shim] xhr result", path, parsed ? (parsed.status || 200) : "passthrough");
+            window.ptLog && ptLog("  -> " + (parsed ? (parsed.status || 200) : "passthrough"));
             if (parsed) {
               var status = parsed.status || 200;
               var text = parsed.json !== undefined ? JSON.stringify(parsed.json) : (parsed.text || "");
@@ -180,6 +196,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
             realSend(body);
           }).catch(function (e) {
             console.error("[PT shim] xhr error", path, String(e));
+            window.ptLog && ptLog("  !! ERROR " + String(e).slice(0, 120));
             Object.defineProperty(xhr, "readyState", { value: 4, writable: false });
             Object.defineProperty(xhr, "status", { value: 500, writable: false });
             Object.defineProperty(xhr, "responseText", { value: JSON.stringify({ error: String(e) }), writable: false });
