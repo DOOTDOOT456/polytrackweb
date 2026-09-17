@@ -588,7 +588,13 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       '<div style="color:#888;font-size:12px;margin-bottom:14px">share this code · drivers join from the GP button</div>' +
       '<div id="pt-lobby-list" style="min-height:80px"></div>' +
       (isHost
-        ? '<textarea id="pt-playlist" placeholder="track IDs, one per line (e.g. spring1)" style="width:100%;height:80px;background:#0a0a0a;color:#fff;border:1px solid #333;border-radius:6px;padding:10px;font-family:monospace;margin-top:10px"></textarea>' +
+        ? '<div style="color:#888;font-size:11px;margin-top:10px;text-transform:uppercase;letter-spacing:1px">Pick tracks for the Grand Prix</div>' +
+          '<div id="pt-track-list" style="max-height:150px;overflow:auto;margin-top:6px;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px"></div>' +
+          '<div style="display:flex;gap:8px;margin-top:8px">' +
+          '  <button id="pt-track-all" style="flex:1;background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px;font-size:11px;cursor:pointer">SELECT ALL</button>' +
+          '  <button id="pt-track-none" style="flex:1;background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px;font-size:11px;cursor:pointer">CLEAR</button>' +
+          '</div>' +
+          '<div id="pt-playlist-count" style="color:#888;font-size:11px;margin-top:6px">0 tracks selected</div>' +
           '<button id="pt-start" style="width:100%;margin-top:10px;background:' + F1_RED + ';color:#fff;border:none;border-radius:6px;padding:14px;font-weight:bold;font-size:16px;cursor:pointer">START RACE 1</button>'
         : '<div style="color:#888;font-size:13px;margin-top:14px">waiting for host to start…</div>') +
       '<div style="text-align:right;margin-top:8px"><button id="pt-leave" style="background:none;border:none;color:#666;cursor:pointer;font-size:12px">leave</button></div>',
@@ -597,9 +603,29 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     document.body.appendChild(lobbyEl);
     lobbyEl.querySelector("#pt-leave").onclick = leave;
     if (isHost) {
+      // Track picker: official tracks grouped by season.
+      var TRACKS = ["summer1","summer2","summer3","summer4","summer5","summer6","summer7",
+                    "winter1","winter2","winter3","winter4",
+                    "desert1","desert2","desert3","desert4"];
+      var listEl = lobbyEl.querySelector("#pt-track-list");
+      var countEl = lobbyEl.querySelector("#pt-playlist-count");
+      function selectedTracks() {
+        return Array.prototype.slice.call(listEl.querySelectorAll("input:checked")).map(function (c) { return c.value; });
+      }
+      function updateCount() { countEl.textContent = selectedTracks().length + " track(s) selected"; }
+      ["SUMMER","WINTER","DESERT"].forEach(function (season) {
+        listEl.appendChild(raceUI('<div style="color:' + F1_RED + ';font-size:10px;font-weight:bold;letter-spacing:2px;margin:6px 0 2px">' + season + '</div>'));
+        TRACKS.filter(function (t) { return t.indexOf(season.toLowerCase()) === 0; }).forEach(function (t) {
+          var row = raceUI('<label style="display:flex;align-items:center;gap:8px;padding:3px 0;color:#fff;font-size:13px;cursor:pointer"><input type="checkbox" value="' + t + '" style="accent-color:' + F1_RED + '" /> ' + t.toUpperCase() + '</label>');
+          listEl.appendChild(row);
+          row.querySelector("input").onchange = updateCount;
+        });
+      });
+      lobbyEl.querySelector("#pt-track-all").onclick = function () { listEl.querySelectorAll("input").forEach(function (c) { c.checked = true; }); updateCount(); };
+      lobbyEl.querySelector("#pt-track-none").onclick = function () { listEl.querySelectorAll("input").forEach(function (c) { c.checked = false; }); updateCount(); };
       lobbyEl.querySelector("#pt-start").onclick = function () {
-        playlist = lobbyEl.querySelector("#pt-playlist").value.split("\n").map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean);
-        if (!playlist.length) { alert("Enter at least one track ID (e.g. spring1). Track IDs are the file names in tracks/official."); return; }
+        playlist = selectedTracks();
+        if (!playlist.length) { alert("Select at least one track for the Grand Prix."); return; }
         wsSend("race_playlist", { playlist: playlist });
         wsSend("race_start", { trackId: playlist[0], raceIdx: 0, startAt: Date.now() + 6000 });
       };
