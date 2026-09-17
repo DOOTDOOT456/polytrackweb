@@ -152,7 +152,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       if (!dbg) {
         if (!document.body) return;
         dbg = document.createElement("div");
-    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;border-radius:4px;display:block";
+    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;border-radius:4px;display:none";
         dbg.textContent = "[PT shim debug]";
         document.body.appendChild(dbg);
       }
@@ -190,10 +190,15 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       var pages = [];
       for (var i = 0; i < entries.length; i += CHANGELOG_PER_PAGE)
         pages.push(entries.slice(i, i + CHANGELOG_PER_PAGE).map(function (e) { return e.text; }));
-      showChangesPopup("Version Changes — Page 1 of " + pages.length, pages[0], "Continue to Game", pages);
+      // Add the refresh reminder so players know how to get the latest version.
+      var pages2 = pages.slice();
+      var last = pages2[pages2.length - 1].slice();
+      last.push("\u21bb  Remember to refresh your page to see the most recent updates!");
+      pages2[pages2.length - 1] = last;
+      showChangesPopup("Version Changes — Page 1 of " + pages2.length, pages2[0], "Continue to Game", pages2);
     }
 
-    // Toggle overlay with Shift+D; shown by default at startup.
+    // Toggle overlay with Shift+D; hidden at startup.
     document.addEventListener("keydown", function (e) {
       if (e.shiftKey && (e.key === "D" || e.key === "d")) {
         if (!dbg) window.ptLog("(shown)");
