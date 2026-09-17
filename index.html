@@ -145,7 +145,10 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     // On-screen debug overlay (so logs are visible without devtools).
     // Deferred: this script runs in <head> before document.body exists.
     var dbg = null;
+    var logLines = []; // buffered so the popup can show the full log history
     window.ptLog = function (msg) {
+      logLines.push(msg);
+      if (logLines.length > 200) logLines.shift();
       if (!dbg) {
         if (!document.body) return;
         dbg = document.createElement("div");
@@ -174,7 +177,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       popupEl = document.createElement("div");
       popupEl.style.cssText = "position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.65)";
       var box = document.createElement("div");
-      box.style.cssText = "background:#141414;color:#fff;border:2px solid #3a3a3a;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.8);padding:24px 28px;min-width:320px;max-width:80vw;max-height:70vh;overflow:auto;font-family:sans-serif";
+      box.style.cssText = "background:#141414;color:#fff;border:2px solid #3a3a3a;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.8);padding:24px 28px;min-width:340px;max-width:80vw;max-height:80vh;overflow:auto;font-family:sans-serif";
       var h = document.createElement("div");
       h.textContent = title;
       h.style.cssText = "font-size:20px;font-weight:bold;margin-bottom:12px";
@@ -195,6 +198,28 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       btn.onclick = hideChangesPopup;
       btnRow.appendChild(btn);
       box.appendChild(btnRow);
+
+      // Full log history section (all API/version activity so far).
+      var logTitle = document.createElement("div");
+      logTitle.textContent = "Logs";
+      logTitle.style.cssText = "font-size:14px;font-weight:bold;margin-top:20px;margin-bottom:6px;color:#aaa;text-transform:uppercase;letter-spacing:1px";
+      box.appendChild(logTitle);
+      var logBox = document.createElement("div");
+      logBox.style.cssText = "background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:10px;max-height:220px;overflow:auto;font:11px monospace;color:#0f0";
+      if (!logLines.length) {
+        var none = document.createElement("div");
+        none.textContent = "(no log entries yet)";
+        none.style.color = "#666";
+        logBox.appendChild(none);
+      }
+      logLines.forEach(function (l) {
+        var d = document.createElement("div");
+        d.textContent = l;
+        logBox.appendChild(d);
+      });
+      logBox.scrollTop = logBox.scrollHeight;
+      box.appendChild(logBox);
+
       popupEl.appendChild(box);
       document.body.appendChild(popupEl);
     }
@@ -251,7 +276,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
         var m2 = (init && init.method) || (typeof input !== "string" && input.method) || "GET";
         var body = init && init.body;
         console.log("[PT shim] fetch", m2, path, query.slice(0, 120));
-        window.ptLog && ptLog("fetch " + m2 + " " + path);
+        window.ptLog && ptLog("fetch " + m2 + " " + path + " version=" + (new URLSearchParams(query).get("version") || "-"));
         try {
           var parsed = await handle(path, query, m2, body);
           console.log("[PT shim] fetch result", path, parsed ? (parsed.status || 200) : "passthrough");
@@ -285,7 +310,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
           var path = qi === -1 ? rest : rest.slice(0, qi);
           var query = qi === -1 ? "" : rest.slice(qi + 1);
           console.log("[PT shim] xhr", method, path, body ? String(body).slice(0, 120) : "");
-          window.ptLog && ptLog("xhr " + method + " " + path);
+          window.ptLog && ptLog("xhr " + method + " " + path + " version=" + (method === "POST" && body ? (new URLSearchParams(String(body)).get("version") || "-") : "-"));
           handle(path, query, method, body).then(function (parsed) {
             console.log("[PT shim] xhr result", path, parsed ? (parsed.status || 200) : "passthrough");
             window.ptLog && ptLog("  -> " + (parsed ? (parsed.status || 200) : "passthrough"));
