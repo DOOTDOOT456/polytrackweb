@@ -23,6 +23,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     if (!r.ok) throw new Error("supabase " + r.status + ": " + (await r.text()));
     return r.status === 204 ? null : r.json();
   }
+  window.ptSb = sb; // exposed for the Grand Prix multiplayer script
 
   async function sha256Hex(s) {
     var b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -460,6 +461,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
   var SB = window.SUPABASE_URL, KEY = window.SUPABASE_ANON_KEY;
   if (!SB || SB.indexOf("YOUR-PROJECT") !== -1) return;
   var MAX_PLAYERS = 10;
+  var sb = window.ptSb; // Supabase REST helper from the leaderboard shim
 
   // ---------------------------------------------------------------- helpers
   var me = { id: null, name: null, colors: null, tokenHash: null };
