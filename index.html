@@ -64,6 +64,8 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       }
       var newPosition = await pos(frames, uploadId);
       if (prevBest) previousPosition = await pos(prevBest.frames, prevBest.id);
+      // Popup: show the position change, dismissed with the Continue button.
+      announceRunChange({ previousPosition: prevBest ? previousPosition : null, newPosition: newPosition });
       // Game expects a bare JSON integer uploadId.
       return { json: newPosition };
     }
@@ -77,6 +79,15 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       var all = await sb("recordings?select=id,token_hash,name,frames,car_colors&version=eq." + version + "&track_id=eq." + te + "&order=frames.asc,id.asc");
       var best = {}, order = [];
       all.forEach(function (r) { if (!best[r.token_hash]) { best[r.token_hash] = r; order.push(r); } });
+      // Auto-delete anonymous rankings (runs with no registered user) and
+      // exclude them from the leaderboard itself.
+      var known = {};
+      try {
+        var uRows = await sb("users?select=token_hash");
+        (uRows || []).forEach(function (u) { known[u.token_hash] = 1; });
+      } catch (e) { console.warn("[PT shim] user lookup failed", String(e)); }
+      autoDeleteAnonymous(all, known);
+      var order = order.filter(function (r) { return known[r.token_hash]; });
       var total = order.length;
       var entries = order.slice(skip, skip + amount).map(function (r) {
         return { id: r.id, userId: r.token_hash, name: r.name, frames: r.frames, carColors: r.car_colors, verifiedState: 1 };
@@ -129,7 +140,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       if (!dbg) {
         if (!document.body) return;
         dbg = document.createElement("div");
-    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;border-radius:4px;display:none";
+    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;padding:6px 8px;max-width:70vw;max-height:40vh;overflow:auto;border-radius:4px;display:block";
         dbg.textContent = "[PT shim debug]";
         document.body.appendChild(dbg);
       }
@@ -138,13 +149,87 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       dbg.appendChild(line);
       while (dbg.children.length > 12) dbg.removeChild(dbg.children[1]);
     };
-    // Toggle overlay with Shift+D; hidden by default.
+    // Toggle overlay with Shift+D; shown by default at startup.
     document.addEventListener("keydown", function (e) {
       if (e.shiftKey && (e.key === "D" || e.key === "d")) {
         if (!dbg) window.ptLog("(shown)");
         else dbg.style.display = dbg.style.display === "none" ? "block" : "none";
       }
     });
+
+    // ---- Big "changes" popup with a Continue button (bottom-right) ----
+    var popupEl = null;
+    function showChangesPopup(title, lines) {
+      if (!document.body) return;
+      hideChangesPopup();
+      popupEl = document.createElement("div");
+      popupEl.style.cssText = "position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.65)";
+      var box = document.createElement("div");
+      box.style.cssText = "background:#141414;color:#fff;border:2px solid #3a3a3a;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.8);padding:24px 28px;min-width:320px;max-width:80vw;max-height:70vh;overflow:auto;font-family:sans-serif";
+      var h = document.createElement("div");
+      h.textContent = title;
+      h.style.cssText = "font-size:20px;font-weight:bold;margin-bottom:12px";
+      box.appendChild(h);
+      lines.forEach(function (l) {
+        var d = document.createElement("div");
+        d.textContent = l;
+        d.style.cssText = "font-size:14px;line-height:1.6;color:#ddd";
+        box.appendChild(d);
+      });
+      var btnRow = document.createElement("div");
+      btnRow.style.cssText = "display:flex;justify-content:flex-end;margin-top:20px";
+      var btn = document.createElement("button");
+      btn.textContent = "Continue";
+      btn.style.cssText = "background:#2e7d32;color:#fff;border:none;border-radius:6px;padding:10px 28px;font-size:16px;cursor:pointer";
+      btn.onmouseover = function () { btn.style.background = "#388e3c"; };
+      btn.onmouseout = function () { btn.style.background = "#2e7d32"; };
+      btn.onclick = hideChangesPopup;
+      btnRow.appendChild(btn);
+      box.appendChild(btnRow);
+      popupEl.appendChild(box);
+      document.body.appendChild(popupEl);
+    }
+    function hideChangesPopup() {
+      if (popupEl && popupEl.parentNode) popupEl.parentNode.removeChild(popupEl);
+      popupEl = null;
+    }
+    function announceRunChange(data) {
+      var lines = [];
+      if (data && data.previousPosition != null && data.newPosition != null) {
+        var diff = data.previousPosition - data.newPosition;
+        lines.push("Previous position: #" + (data.previousPosition + 1));
+        lines.push("New position: #" + (data.newPosition + 1));
+        if (diff > 0) lines.push("You moved UP " + diff + " place" + (diff === 1 ? "" : "s") + "!");
+        else if (diff < 0) lines.push("You moved down " + (-diff) + " place" + (diff === -1 ? "" : "s") + ".");
+        else lines.push("Position unchanged.");
+      } else if (data && data.newPosition != null) {
+        lines.push("New position: #" + (data.newPosition + 1));
+      } else {
+        lines.push("Your run was submitted to the leaderboard.");
+      }
+      showChangesPopup("Leaderboard Update", lines);
+    }
+
+    // ---- Auto-delete anonymous rankings ----
+    // A ranking is "anonymous" when its token_hash has no registered user row.
+    var anonDeleted = false;
+    function autoDeleteAnonymous(allRows, known) {
+      if (anonDeleted || !allRows.length) return;
+      try {
+        var hashes = [];
+        var seen = {};
+        allRows.forEach(function (r) { if (!seen[r.token_hash]) { seen[r.token_hash] = 1; hashes.push(r.token_hash); } });
+        var anon = hashes.filter(function (h) { return !known[h]; });
+        if (!anon.length) return;
+        anonDeleted = true;
+        sb("recordings?token_hash=in.(" + anon.join(",") + ")", { method: "DELETE" })
+          .then(function () {
+            console.log("[PT shim] auto-deleted anonymous rankings:", anon.length, "player(s)");
+            window.ptLog && ptLog("auto-deleted " + anon.length + " anonymous ranking(s)");
+          })
+          .catch(function (e) { console.warn("[PT shim] anon delete failed", String(e)); anonDeleted = false; });
+      } catch (e) { console.warn("[PT shim] anon cleanup error", String(e)); }
+    }
     document.addEventListener("DOMContentLoaded", function () { window.ptLog("shim active -> " + SB); });
     var of = window.fetch;
     window.fetch = async function (input, init) {
