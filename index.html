@@ -180,15 +180,17 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
         "Ghost replays and user profiles supported",
       ]},
     ];
+    var CHANGELOG_PER_PAGE = 5; // most recent 5 entries per page
     function showChangelog() {
-      var lines = [];
+      // Flatten changelog into page-sized chunks: newest 5 entries on page 1.
+      var entries = [];
       CHANGELOG.forEach(function (v) {
-        lines.push("v" + v.version + "  (" + v.date + ")");
-        v.changes.forEach(function (c) { lines.push("   • " + c); });
-        lines.push("");
+        v.changes.forEach(function (c) { entries.push({ v: v, text: "v" + v.version + "  (" + v.date + ")  —  " + c }); });
       });
-      // Reuse the popup, but with a Continue to Game button.
-      showChangesPopup("Version Changes", lines, "Continue to Game");
+      var pages = [];
+      for (var i = 0; i < entries.length; i += CHANGELOG_PER_PAGE)
+        pages.push(entries.slice(i, i + CHANGELOG_PER_PAGE).map(function (e) { return e.text; }));
+      showChangesPopup("Version Changes — Page 1 of " + pages.length, pages[0], "Continue to Game", pages);
     }
 
     // Toggle overlay with Shift+D; shown by default at startup.
@@ -201,7 +203,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 
     // ---- Big "changes" popup with a Continue button (bottom-right) ----
     var popupEl = null;
-    function showChangesPopup(title, lines, continueLabel) {
+    function showChangesPopup(title, lines, continueLabel, pages) {
       if (!document.body) return;
       hideChangesPopup();
       popupEl = document.createElement("div");
@@ -218,6 +220,57 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
         d.style.cssText = "font-size:14px;line-height:1.6;color:#ddd";
         box.appendChild(d);
       });
+
+      // Page changer at the bottom (when the popup has multiple pages).
+      if (pages && pages.length > 1) {
+        var pageRow = document.createElement("div");
+        pageRow.style.cssText = "display:flex;justify-content:center;align-items:center;gap:12px;margin-top:20px";
+        var prevBtn = document.createElement("button");
+        var nextBtn = document.createElement("button");
+        var pageLabel = document.createElement("span");
+        var styleNav = function (b) {
+          b.style.cssText = "background:#2a2a2a;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:14px;cursor:pointer";
+          b.onmouseover = function () { b.style.background = "#3a3a3a"; };
+          b.onmouseout = function () { b.style.background = "#2a2a2a"; };
+        };
+        styleNav(prevBtn); styleNav(nextBtn);
+        prevBtn.textContent = "\u2190 Prev";
+        nextBtn.textContent = "Next \u2192";
+        pageLabel.style.cssText = "font-size:13px;color:#aaa;min-width:70px;text-align:center";
+        var cur = 0;
+        function updatePage() {
+          // Swap content lines in place.
+          var contentEls = [];
+          for (var n = 0; n < box.childNodes.length; n++) {
+            var c = box.childNodes[n];
+            if (c === pageRow || c === btnRow || c === logTitle || c === logBox) break;
+            contentEls.push(c);
+          }
+          // Remove old title + content lines (everything before pageRow).
+          contentEls.forEach(function (c) { box.removeChild(c); });
+          h.textContent = "Version Changes — Page " + (cur + 1) + " of " + pages.length;
+          box.insertBefore(h, pageRow);
+          pages[cur].forEach(function (l) {
+            var d = document.createElement("div");
+            d.textContent = l;
+            d.style.cssText = "font-size:14px;line-height:1.6;color:#ddd";
+            box.insertBefore(d, pageRow);
+          });
+          pageLabel.textContent = "Page " + (cur + 1) + " / " + pages.length;
+          prevBtn.disabled = cur === 0;
+          nextBtn.disabled = cur === pages.length - 1;
+          prevBtn.style.opacity = prevBtn.disabled ? "0.4" : "1";
+          nextBtn.style.opacity = nextBtn.disabled ? "0.4" : "1";
+        }
+        prevBtn.onclick = function () { if (cur > 0) { cur--; updatePage(); } };
+        nextBtn.onclick = function () { if (cur < pages.length - 1) { cur++; updatePage(); } };
+        pageRow.appendChild(prevBtn);
+        pageRow.appendChild(pageLabel);
+        pageRow.appendChild(nextBtn);
+        box.appendChild(pageRow);
+        updatePage();
+      }
+
       var btnRow = document.createElement("div");
       btnRow.style.cssText = "display:flex;justify-content:flex-end;margin-top:20px";
       var btn = document.createElement("button");
