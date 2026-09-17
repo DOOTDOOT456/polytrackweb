@@ -76,12 +76,21 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       var amount = Math.min(50, Math.max(1, parseInt(q.get("amount") || "10", 10) || 10));
       var te = encodeURIComponent(trackId);
       // Ignore onlyVerified: this instance has no verifier, so all runs count.
-      var all = await sb("recordings?select=id,token_hash,name,frames,car_colors&version=eq." + version + "&track_id=eq." + te + "&order=frames.asc,id.asc");
+      var all = await sb("recordings?select=id,token_hash,name,frames,car_colors,created_at&version=eq." + version + "&track_id=eq." + te + "&order=frames.asc,id.asc");
+      // Auto-delete old runs (older than 6 months) and anonymous rankings
+      // (runs with no registered user); exclude both from the leaderboard.
+      var known = {};
+      var cutoff = Date.now() - 182 * 24 * 60 * 60 * 1000; // ~6 months
+      try {
+        var del = await sb("recordings?select=id&created_at=lt." + cutoff, { method: "DELETE", prefer: "return=representation" });
+        if (del && del.length) {
+          console.log("[PT shim] auto-deleted", del.length, "run(s) older than 6 months");
+          window.ptLog && ptLog("auto-deleted " + del.length + " run(s) older than 6 months");
+        }
+      } catch (e) { console.warn("[PT shim] old-run delete failed", String(e)); }
+      all = all.filter(function (r) { return r.created_at >= cutoff; });
       var best = {}, order = [];
       all.forEach(function (r) { if (!best[r.token_hash]) { best[r.token_hash] = r; order.push(r); } });
-      // Auto-delete anonymous rankings (runs with no registered user) and
-      // exclude them from the leaderboard itself.
-      var known = {};
       try {
         var uRows = await sb("users?select=token_hash");
         (uRows || []).forEach(function (u) { known[u.token_hash] = 1; });
