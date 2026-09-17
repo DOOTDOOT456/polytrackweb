@@ -564,8 +564,13 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     };
     ws.onmessage = function (e) {
       var m = JSON.parse(e.data);
-      if (m.event === "race_join" && m.payload) players[m.payload.player.id] = m.payload.player;
-      if (m.event === "race_leave") delete players[m.payload.playerId];
+      // Supabase Realtime wraps our broadcasts: {event:"broadcast", payload:{type:"broadcast", event:"<ours>", payload:{...}}}
+      if (m.event === "broadcast" && m.payload && m.payload.event) {
+        m.event = m.payload.event;
+        m.payload = m.payload.payload;
+      }
+      if (m.event === "race_join" && m.payload && m.payload.player) players[m.payload.player.id] = m.payload.player;
+      if (m.event === "race_leave" && m.payload) delete players[m.payload.playerId];
       if (m.event === "race_playlist" && m.payload) { playlist = m.payload.playlist; }
       if (m.event === "race_start" && m.payload) { startAt = m.payload.startAt; raceIdx = m.payload.raceIdx || 0; showCountdown(m.payload.trackId); }
       if (m.event === "race_finish" && m.payload) { finished[m.payload.playerId] = m.payload; renderTower(); }
@@ -627,7 +632,10 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
         playlist = selectedTracks();
         if (!playlist.length) { alert("Select at least one track for the Grand Prix."); return; }
         wsSend("race_playlist", { playlist: playlist });
-        wsSend("race_start", { trackId: playlist[0], raceIdx: 0, startAt: Date.now() + 6000 });
+        // self:false means the host won't hear its own broadcast — start locally too.
+        startAt = Date.now() + 6000; raceIdx = 0;
+        showCountdown(playlist[0]);
+        wsSend("race_start", { trackId: playlist[0], raceIdx: 0, startAt: startAt });
       };
     }
     renderLobby();
