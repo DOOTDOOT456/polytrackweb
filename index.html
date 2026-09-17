@@ -670,7 +670,11 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     var iv = setInterval(function () {
       var left = Math.ceil((startAt - Date.now()) / 1000);
       t.textContent = left > 0 ? left : "GO!";
-      if (left <= 0) { clearInterval(iv); setTimeout(function () { cdEl.remove(); cdEl = null; }, 1200); }
+      if (left <= 0) {
+        clearInterval(iv);
+        setTimeout(function () { if (cdEl) { cdEl.remove(); cdEl = null; } }, 1200);
+        autoStartTrack(trackId);
+      }
     }, 200);
     // Timing tower
     towerEl = raceUI('<div style="font-weight:900;font-size:12px;color:' + F1_RED + ';letter-spacing:2px;margin-bottom:6px">LIVE TIMING · ' + (trackId || "").toUpperCase() + '</div><div id="pt-tower"></div>',
@@ -678,6 +682,35 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     towerEl.className = "pt-race-hub";
     document.body.appendChild(towerEl);
     renderTower();
+  }
+  // Auto-load the race track: the bundle has no public API, but track buttons exist in
+  // the DOM (.track .button with a .track-title). Poll and click the matching one —
+  // works as soon as the player's track menu is (or gets) open.
+  function autoStartTrack(trackId) {
+    if (!trackId) return;
+    var target = trackId.replace(/[^a-z0-9]/g, "").toLowerCase(); // e.g. summer1 -> summer1
+    var tries = 0;
+    try { window.ptLog && window.ptLog("GP: auto-loading track " + trackId); } catch (e) {}
+    var poll = setInterval(function () {
+      tries++;
+      if (roomCode == null || tries > 120) { clearInterval(poll); return; }
+      var btns = document.querySelectorAll(".menu .track button.button");
+      for (var i = 0; i < btns.length; i++) {
+        var titleEl = btns[i].querySelector(".track-title p");
+        if (!titleEl) continue;
+        var name = (titleEl.textContent || "").replace(/[^a-z0-9]/g, "").toLowerCase();
+        if (name === target) {
+          clearInterval(poll);
+          btns[i].click();
+          try { window.ptLog && window.ptLog("GP: clicked track " + titleEl.textContent); } catch (e) {}
+          return;
+        }
+      }
+      // Track menu not open yet — remind the player once.
+      if (tries === 30 && towerEl) {
+        towerEl.insertAdjacentHTML("beforeend", '<div style="color:#e10600;font-size:10px;margin-top:6px">open the PLAY menu — the track will start automatically</div>');
+      }
+    }, 500);
   }
   function renderTower() {
     if (!towerEl) return;
