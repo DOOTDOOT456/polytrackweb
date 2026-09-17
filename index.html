@@ -21,7 +21,8 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       body: opts && opts.body
     });
     if (!r.ok) throw new Error("supabase " + r.status + ": " + (await r.text()));
-    return r.status === 204 ? null : r.json();
+    if (r.status === 204) return null;
+    try { return await r.json(); } catch (e) { return null; } // empty bodies (e.g. inserts without return) are fine
   }
   window.ptSb = sb; // exposed for the Grand Prix multiplayer script
 
