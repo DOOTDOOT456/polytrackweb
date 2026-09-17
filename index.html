@@ -161,6 +161,36 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       dbg.appendChild(line);
       while (dbg.children.length > 12) dbg.removeChild(dbg.children[1]);
     };
+    // Changelog: shown at game load, dismissed with "Continue to Game".
+    var CHANGELOG = [
+      { version: "0.5.2", date: "2026-09-17", changes: [
+        "Leaderboard Update popup with Continue button after each run",
+        "On-screen log overlay now visible from startup (Shift+D toggles)",
+        "Full log history shown inside the popup",
+        "Anonymous rankings auto-deleted and excluded from leaderboards",
+        "Runs older than 6 months auto-deleted",
+      ]},
+      { version: "0.5.1", date: "2026-08-02", changes: [
+        "Physics determinism self-test forced to Ok on failure",
+        "Leaderboard shim: userEntry position fix",
+        "Debug overlay deferred until page body exists",
+      ]},
+      { version: "0.5.0", date: "2026-06-10", changes: [
+        "Supabase-backed leaderboard shim replaces dead Kodub API",
+        "Ghost replays and user profiles supported",
+      ]},
+    ];
+    function showChangelog() {
+      var lines = [];
+      CHANGELOG.forEach(function (v) {
+        lines.push("v" + v.version + "  (" + v.date + ")");
+        v.changes.forEach(function (c) { lines.push("   • " + c); });
+        lines.push("");
+      });
+      // Reuse the popup, but with a Continue to Game button.
+      showChangesPopup("Version Changes", lines, "Continue to Game");
+    }
+
     // Toggle overlay with Shift+D; shown by default at startup.
     document.addEventListener("keydown", function (e) {
       if (e.shiftKey && (e.key === "D" || e.key === "d")) {
@@ -171,7 +201,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 
     // ---- Big "changes" popup with a Continue button (bottom-right) ----
     var popupEl = null;
-    function showChangesPopup(title, lines) {
+    function showChangesPopup(title, lines, continueLabel) {
       if (!document.body) return;
       hideChangesPopup();
       popupEl = document.createElement("div");
@@ -191,7 +221,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       var btnRow = document.createElement("div");
       btnRow.style.cssText = "display:flex;justify-content:flex-end;margin-top:20px";
       var btn = document.createElement("button");
-      btn.textContent = "Continue";
+      btn.textContent = continueLabel || "Continue";
       btn.style.cssText = "background:#2e7d32;color:#fff;border:none;border-radius:6px;padding:10px 28px;font-size:16px;cursor:pointer";
       btn.onmouseover = function () { btn.style.background = "#388e3c"; };
       btn.onmouseout = function () { btn.style.background = "#2e7d32"; };
@@ -264,7 +294,7 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
           .catch(function (e) { console.warn("[PT shim] anon delete failed", String(e)); anonDeleted = false; });
       } catch (e) { console.warn("[PT shim] anon cleanup error", String(e)); }
     }
-    document.addEventListener("DOMContentLoaded", function () { window.ptLog("shim active -> " + SB); });
+    document.addEventListener("DOMContentLoaded", function () { window.ptLog("shim active -> " + SB); showChangelog(); });
     var of = window.fetch;
     window.fetch = async function (input, init) {
       var u = typeof input === "string" ? input : (input && input.url);
