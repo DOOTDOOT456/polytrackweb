@@ -655,8 +655,15 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
   var cdEl = null, towerEl = null;
   function showCountdown(trackId) {
     hideAll();
-    cdEl = raceUI('', 'position:fixed;inset:0;z-index:99996;display:flex;align-items:center;justify-content:center;pointer-events:none;font-family:sans-serif');
+    cdEl = raceUI('', 'position:fixed;inset:0;z-index:99996;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;font-family:sans-serif');
     cdEl.className = "pt-race-hub";
+    var info = raceUI(
+      '<div style="background:rgba(10,10,14,.85);border:1px solid #2a2a2e;border-radius:10px;padding:18px 34px;text-align:center">' +
+      '<div style="font-size:13px;font-weight:900;letter-spacing:3px;color:#888">RACE ' + ((raceIdx || 0) + 1) + ' OF ' + Math.max(1, playlist.length) + ' · ROOM ' + (roomCode || "—") + '</div>' +
+      '<div style="font-size:34px;font-weight:900;letter-spacing:4px;color:#fff;margin:4px 0 10px">' + (trackId || "track").toUpperCase() + '</div>' +
+      '<div style="font-size:11px;color:#aaa">open the track menu and pick this track · finish your run to report to the tower</div>' +
+      '</div>');
+    cdEl.appendChild(info);
     var t = raceUI('', 'font-size:120px;font-weight:900;color:' + F1_RED + ';text-shadow:0 0 40px rgba(225,6,0,.5)');
     cdEl.appendChild(t);
     document.body.appendChild(cdEl);
