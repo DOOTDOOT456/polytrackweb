@@ -685,11 +685,65 @@
     panel.querySelector("#ptb-search").textContent = search.running ? "STOP" : "SEARCH";
   }
 
+  // ---------------------------------------------------------------- bot gate
+  // Password-protects the bot only (the game itself stays open). The correct
+  // hash unlocks the panel for this browser session; a new tab asks again.
+  // Client-side only — a determined user can read this file and bypass it.
+  var BOT_HASH = "f95d0934eb4aae00b4b40cac45ae529f6d17d6bbc95029e4de31139b512d90aa";
+  function sha256Hex(s) {
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)).then(function (buf) {
+      var a = new Uint8Array(buf), o = "", i;
+      for (i = 0; i < a.length; i++) o += ("0" + a[i].toString(16)).slice(-2);
+      return o;
+    });
+  }
+
+  function botUnlocked() {
+    try { return sessionStorage.getItem("ptbot_ok") === BOT_HASH; } catch (e) { return false; }
+  }
+
+  function buildGate() {
+    if (document.getElementById("ptb-gate")) return;
+    var g = document.createElement("div");
+    g.id = "ptb-gate";
+    g.style.cssText = "position:fixed;bottom:10px;left:10px;z-index:99999;background:rgba(10,10,14,.93);" +
+      "border:1px solid #2a2a2e;border-radius:10px;padding:12px 14px;width:300px;max-width:92vw;" +
+      "font:12px/1.5 ui-monospace,monospace;color:#ddd;user-select:none";
+    g.innerHTML =
+      '<div style="color:#e10600;font-weight:900;letter-spacing:2px;margin-bottom:6px">PT OPTIMIZE</div>' +
+      '<input id="ptb-gate-pw" type="password" placeholder="bot password" autocomplete="off" ' +
+      'style="width:100%;background:#0a0a0a;color:#fff;border:1px solid #333;border-radius:6px;padding:8px;font:12px ui-monospace,monospace;box-sizing:border-box;text-align:center" />' +
+      '<div id="ptb-gate-err" style="color:#e10600;font-size:11px;margin-top:6px;min-height:14px"></div>';
+    document.body.appendChild(g);
+    var input = g.querySelector("#ptb-gate-pw"), errEl = g.querySelector("#ptb-gate-err");
+    function tryUnlock() {
+      sha256Hex(input.value).then(function (h) {
+        if (h === BOT_HASH) {
+          try { sessionStorage.setItem("ptbot_ok", h); } catch (e) {}
+          g.remove();
+          buildHud();
+          log("PolyTrack Optimize loaded.");
+          log("Finish a track once — the bot optimizes from there.");
+          updateHud(true);
+        } else {
+          errEl.textContent = "wrong password";
+          input.value = ""; input.focus();
+        }
+      });
+    }
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") tryUnlock(); });
+    input.focus();
+  }
+
   // ------------------------------------------------------------------- boot
   function boot() {
-    buildHud();
-    log("PolyTrack Optimize loaded.");
-    log("Finish a track once — the bot optimizes from there.");
+    if (botUnlocked()) {
+      buildHud();
+      log("PolyTrack Optimize loaded.");
+      log("Finish a track once — the bot optimizes from there.");
+    } else {
+      buildGate();
+    }
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
