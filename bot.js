@@ -735,7 +735,7 @@
     input.focus();
   }
 
-  var uiHidden = false;
+  var uiHidden = true; // start hidden; Shift+B shows it
   function setUiHidden(h) {
     uiHidden = h;
     var el = panel || document.getElementById("ptb-gate");
@@ -749,6 +749,7 @@
 
   // ------------------------------------------------------------------- boot
   function boot() {
+    setUiHidden(true); // hidden on startup — Shift+B to show
     if (botUnlocked()) {
       buildHud();
       log("PolyTrack Optimize loaded.");
