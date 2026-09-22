@@ -735,6 +735,18 @@
     input.focus();
   }
 
+  var uiHidden = false;
+  function setUiHidden(h) {
+    uiHidden = h;
+    var el = panel || document.getElementById("ptb-gate");
+    if (el) el.style.display = h ? "none" : "";
+  }
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "KeyB" && e.shiftKey && !e.__ptbot && !e.repeat) {
+      setUiHidden(!uiHidden);
+    }
+  }, true);
+
   // ------------------------------------------------------------------- boot
   function boot() {
     if (botUnlocked()) {
