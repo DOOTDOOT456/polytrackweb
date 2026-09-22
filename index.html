@@ -43,6 +43,9 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
           name.length < 1 || name.length > 50 || !carColors || recording.length === 0)
         return new Response(JSON.stringify({ error: "bad request" }), { status: 400 });
       var tokenHash = await sha256Hex(userToken);
+      // Expose the game's own serialized replay so the bot can use it as a
+      // guaranteed-accurate baseline for headless evaluation.
+      try { window.__ptGameRecording && window.__ptGameRecording(trackId, recording, frames); } catch (e) {}
       var rows = await sb("recordings?select=id&version=eq." + version + "&track_id=eq." + encodeURIComponent(trackId) + "&token_hash=eq." + tokenHash);
       var previousPosition = rows.length ? null : undefined;
       var prevBest = null;

@@ -311,6 +311,7 @@
       // New track: drop cached state, stop the search, let eval workers re-init.
       baseHash = null;
       best = null; bestFrames = Infinity;
+      bestDecoded = null; gameRec = false;
       prevFrames = -1;
       epoch++; // invalidate any in-flight evals from the previous track
       logLines.length = 0;
@@ -377,13 +378,142 @@
     }
   }
 
+  function decodeGameRecording(str) {
+    try {
+      var b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var raw = inflateZlib(bytes);
+      function chan(off) {
+        if (off + 3 > raw.length) return null;
+        var n = raw[off] | raw[off + 1] << 8 | raw[off + 2] << 16;
+        if (off + 3 + 3 * n > raw.length) return null;
+        var a = [], prev = 0;
+        for (var j = 0; j < n; j++) {
+          var d = raw[off + 3 + 3 * j] | raw[off + 3 + 3 * j + 1] << 8 | raw[off + 3 + 3 * j + 2] << 16;
+          var v = j === 0 ? d : prev + d;
+          a.push(v); prev = v;
+        }
+        return a;
+      }
+      var o = 0, out = [];
+      for (var c = 0; c < 5; c++) {
+        var ch = chan(o);
+        if (ch == null) return null;
+        out.push(ch); o += 3 + 3 * ch.length;
+      }
+      return out;
+    } catch (e) { return null; }
+  }
+
+  function inflateZlib(bytes) {
+    // Parse a zlib stream: 2-byte header, then raw DEFLATE blocks, then adler32.
+    var pos = 2;
+    var out = [];
+    var bitBuf = 0, bitCnt = 0;
+    function bits(n) {
+      while (bitCnt < n) { bitBuf |= bytes[pos++] << bitCnt; bitCnt += 8; }
+      var v = bitBuf & ((1 << n) - 1); bitBuf >>>= n; bitCnt -= n; return v;
+    }
+    // fixed-Huffman decode tables
+    var LEN_BASE=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+    var LEN_EXTRA=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+    var DIST_BASE=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+    var DIST_EXTRA=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+    function buildHuff(lens) {
+      var maxLen = 0, i;
+      for (i = 0; i < lens.length; i++) if (lens[i] > maxLen) maxLen = lens[i];
+      var blcount = new Array(maxLen + 1).fill(0);
+      for (i = 0; i < lens.length; i++) if (lens[i]) blcount[lens[i]]++;
+      var nextCode = [0], code = 0;
+      for (i = 1; i <= maxLen; i++) { code = (code + blcount[i - 1]) << 1; nextCode[i] = code; }
+      var map = {};
+      for (i = 0; i < lens.length; i++) if (lens[i]) map[nextCode[lens[i]]++] = { sym: i, len: lens[i] };
+      return map;
+    }
+    var fixedLit = buildHuff((function () {
+      var l = [];
+      for (var i = 0; i < 288; i++) l.push(i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8);
+      return l;
+    })());
+    var fixedDist = buildHuff(new Array(30).fill(5));
+    function decodeSym(map) {
+      var code = 0, len = 0;
+      while (true) {
+        code = (code << 1) | bits(1); len++;
+        if (map[code] && map[code].len === len) return map[code].sym;
+        if (len > 15) throw new Error("bad huffman");
+      }
+    }
+    function dynTables() {
+      var order = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+      var hlit = bits(5) + 257, hdist = bits(5) + 1, hclen = bits(4) + 4;
+      var clLens = new Array(19).fill(0);
+      for (var i = 0; i < hclen; i++) clLens[order[i]] = bits(3);
+      var clMap = buildHuff(clLens);
+      var lens = [];
+      while (lens.length < hlit + hdist) {
+        var sym = decodeSym(clMap);
+        if (sym < 16) { lens.push(sym); continue; }
+        var rep, val;
+        if (sym === 16) { rep = 3 + bits(2); val = lens[lens.length - 1]; }
+        else if (sym === 17) { rep = 3 + bits(3); val = 0; }
+        else { rep = 11 + bits(7); val = 0; }
+        while (rep--) lens.push(val);
+      }
+      return [buildHuff(lens.slice(0, hlit)), buildHuff(lens.slice(hlit))];
+    }
+    var last = -1;
+    while (true) {
+      last = bits(1);
+      var type = bits(2);
+      if (type === 0) {
+        bitBuf = 0; bitCnt = 0;
+        var lo = bytes[pos] | bytes[pos + 1] << 8, hi = bytes[pos + 2] | bytes[pos + 3] << 8;
+        pos += 4;
+        for (var i = 0; i < lo; i++) out.push(bytes[pos++]);
+      } else if (type === 1 || type === 2) {
+        var lit, dist;
+        if (type === 1) { lit = fixedLit; dist = fixedDist; }
+        else { var t = dynTables(); lit = t[0]; dist = t[1]; }
+        while (true) {
+          var sym = decodeSym(lit);
+          if (sym === 256) break;
+          if (sym < 256) { out.push(sym); continue; }
+          var li = sym - 257, len = LEN_BASE[li] + (LEN_EXTRA[li] ? bits(LEN_EXTRA[li]) : 0);
+          var ds = decodeSym(dist), di = ds;
+          var distance = DIST_BASE[di] + (DIST_EXTRA[di] ? bits(DIST_EXTRA[di]) : 0);
+          for (var k = 0; k < len; k++) out.push(out[out.length - distance]);
+        }
+      } else throw new Error("bad block type");
+      if (last) break;
+    }
+    return new Uint8Array(out);
+  }
+
+  // Game-provided recordings (hooked in index.html's upload shim): the exact
+  // serialized replay the game itself produced — always evaluates correctly.
+  window.__ptGameRecording = function (trackId, recording, frames) {
+    if (typeof recording !== "string" || !recording.length || frames == null) return;
+    if (best == null || frames < bestFrames) {
+      best = recording; // opaque string, passed straight to eval
+      bestFrames = frames;
+      bestDecoded = decodeGameRecording(recording); // for pilot + mutation
+      gameRec = true;
+      persist();
+      log("new best " + fmt(frames) + " (game replay)");
+    }
+  };
+  var gameRec = false;
+
   function onRunFinished(frames) {
     if (runReported) return; // finish states repeat every frame after the run
     runReported = true;
     pilotActive = false;
     var hasInputs = capRec[UP].length + capRec[RIGHT].length + capRec[DOWN].length +
                     capRec[LEFT].length + capRec[RESET].length > 0;
-    if (hasInputs && (best == null || frames < bestFrames)) {
+    if (hasInputs && !gameRec && (best == null || frames < bestFrames)) {
       best = cloneRec(capRec);
       bestFrames = frames;
       persist();
@@ -421,13 +551,15 @@
     (document.body || document).dispatchEvent(ev);
   }
 
+  var bestDecoded = null; // decoded channels for the game-replay best (for pilot + mutation)
   function pilotStep(s) {
     if (!pilotSync) {
       pilotLast = { up: !!s.controls.up, right: !!s.controls.right, down: !!s.controls.down,
                     left: !!s.controls.left, reset: !!s.controls.reset };
       pilotSync = true;
     }
-    var des = recStateAll(best, s.frames + 1);
+    if (gameRec ? !bestDecoded : !best) return; // waiting on decode
+    var des = recStateAll(gameRec ? bestDecoded : best, s.frames + 1);
     for (var c = 0; c < 5; c++) {
       var k = CHAN[c];
       if (des[c] !== pilotLast[k]) {
@@ -539,7 +671,7 @@
     log("searching (pop " + POP + ")…");
     updateHud(true);
     var ep = epoch;
-    pool.eval(serializeRec(best), evalTarget(), function (f) {
+    pool.eval(typeof best === "string" ? best : serializeRec(best), evalTarget(), function (f) {
       if (ep !== epoch) { search.running = false; updateHud(true); return; }
       if (f == null) { search.running = false; log("baseline didn't finish in sim — aborted"); updateHud(true); return; }
       bestFrames = f;
@@ -562,7 +694,10 @@
     search.gen++;
     var ep = epoch;
     var cands = [], i;
-    for (i = 0; i < POP; i++) cands.push(mutate(best, (bestFrames === Infinity ? HARD_LIMIT : bestFrames) + MARGIN));
+    var baseRec = gameRec ? bestDecoded : best;
+    if (baseRec) {
+      for (i = 0; i < POP; i++) cands.push(mutate(baseRec, (bestFrames === Infinity ? HARD_LIMIT : bestFrames) + MARGIN));
+    }
     var pending = cands.length, results = new Array(cands.length);
     cands.forEach(function (c, ci) {
       pool.eval(serializeRec(c), evalTarget(), function (f) {
@@ -574,6 +709,8 @@
         if (ep !== epoch || search.stop || best == null) return; // track switched or best cleared mid-generation
         if (bi >= 0 && bf < bestFrames) {
           best = cands[bi]; bestFrames = bf;
+          gameRec = false; // adopted a mutant: channels array now
+          bestDecoded = null;
           report(); persist();
           log("gen " + search.gen + ": " + fmt(bf));
         }
@@ -623,6 +760,7 @@
     if (search.running) { search.stop = true; }
     epoch++; // invalidate in-flight evals so a finishing generation can't resurrect the cleared best
     best = null; bestFrames = Infinity;
+    bestDecoded = null; gameRec = false;
     computeHash(function (k) { if (k) { try { localStorage.removeItem("ptbot_" + k); } catch (e) {} } });
     log("best cleared — drive a fresh baseline");
     updateHud(true);
