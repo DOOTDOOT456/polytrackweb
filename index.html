@@ -24,7 +24,6 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     if (r.status === 204) return null;
     try { return await r.json(); } catch (e) { return null; } // empty bodies (e.g. inserts without return) are fine
   }
-  window.ptSb = sb; // exposed for the Grand Prix multiplayer script
 
   async function sha256Hex(s) {
     var b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -68,8 +67,6 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
       if (prevBest) previousPosition = await pos(prevBest.frames, prevBest.id);
       // Popup: show the position change, dismissed with the Continue button.
       announceRunChange({ previousPosition: prevBest ? previousPosition : null, newPosition: newPosition });
-      // Live multiplayer: report the finish to any race room we're in.
-      try { window.ptRaceFinish && window.ptRaceFinish(trackId, frames, name); } catch (e) {}
       // Game expects a bare JSON integer uploadId.
       return { json: newPosition };
     }
@@ -167,14 +164,16 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     };
     // Changelog: shown at game load, dismissed with "Continue to Game".
     var CHANGELOG = [
+      { version: "0.6.0", date: "2026-09-18", changes: [
+        "PT Optimize bot: finish a track once and it hill-climbs toward the fastest possible run",
+        "Parallel headless simulation search + replay pilot; best replays saved per track",
+      ]},
       { version: "0.5.2", date: "2026-09-17", changes: [
         "Leaderboard Update popup with Continue button after each run",
         "On-screen log overlay now visible from startup (Shift+D toggles)",
         "Full log history shown inside the popup",
         "Anonymous rankings auto-deleted and excluded from leaderboards",
         "Runs older than 6 months auto-deleted",
-        "GRAND PRIX live multiplayer: host a race room, share the code, race up to 10 drivers across a map playlist with an F1 live timing tower",
-        "Join-room fix and a bolder GRAND PRIX hub button",
       ]},
       { version: "0.5.1", date: "2026-08-02", changes: [
         "Physics determinism self-test forced to Ok on failure",
@@ -436,314 +435,5 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
     };
     PXHR.UNSENT = 0; PXHR.OPENED = 1; PXHR.HEADERS_RECEIVED = 2; PXHR.LOADING = 3; PXHR.DONE = 4;
     window.XMLHttpRequest = PXHR;
-  }
-})();
-</script>
-<script>
-// ============================================================================
-// PolyTrack Grand Prix — free live multiplayer race rooms (up to 10 players).
-// Uses Supabase Realtime (websockets) for room signaling. Free tier, no server
-// to run. Rooms live in the `race_rooms` table + realtime broadcasts.
-//
-// One-time setup in the Supabase SQL editor:
-//
-//   create table if not exists race_rooms (
-//     code text primary key,
-//     host_token text not null,
-//     playlist text[] not null default '{}',
-//     created_at bigint not null default (extract(epoch from now()) * 1000)::bigint
-//   );
-//   alter table race_rooms enable row level security;
-//   create policy "public race_rooms" on race_rooms for all using (true) with check (true);
-//   alter publication supabase_realtime add table race_rooms;
-//
-// ============================================================================
-(function () {
-  var SB = window.SUPABASE_URL, KEY = window.SUPABASE_ANON_KEY;
-  if (!SB || SB.indexOf("YOUR-PROJECT") !== -1) return;
-  var MAX_PLAYERS = 10;
-  var sb = window.ptSb; // Supabase REST helper from the leaderboard shim
-
-  // ---------------------------------------------------------------- helpers
-  var me = { id: null, name: null, colors: null, tokenHash: null };
-  function loadMe() {
-    // F1-style three-letter driver tag from the player's saved name (set in game options).
-    try {
-      var raw = localStorage.getItem("pt_user_profile");
-      if (raw) { var p = JSON.parse(raw); me.name = p.name; me.colors = p.carColors; }
-    } catch (e) {}
-    // Pull from the shim's known token if the game saved one; otherwise anon id.
-    me.id = me.id || (function () {
-      var t = null; try { t = localStorage.getItem("pt_mp_id"); } catch (e) {}
-      if (!t) { t = Math.random().toString(36).slice(2, 10); try { localStorage.setItem("pt_mp_id", t); } catch (e) {} }
-      return t;
-    })();
-    me.name = me.name || ("P" + me.id.slice(0, 3).toUpperCase());
-  }
-  loadMe();
-
-  function raceUI(html, css) {
-    var d = document.createElement("div");
-    d.style.cssText = css || "";
-    d.innerHTML = html;
-    return d;
-  }
-  var F1_RED = "#e10600";
-
-  // ------------------------------------------------------------ race hub UI
-  var hubBtn = null;
-  function openRaceHub() {
-    document.querySelectorAll(".pt-race-hub").forEach(function (n) { n.remove(); });
-    var ov = raceUI('', 'position:fixed;inset:0;z-index:99998;display:flex;align-items:center;justify-content:center;background:rgba(5,5,8,.9);font-family:sans-serif');
-    ov.className = "pt-race-hub";
-    var panel = raceUI(
-      '<div style="font-size:26px;font-weight:900;letter-spacing:2px;color:' + F1_RED + '">GRAND PRIX</div>' +
-      '<div style="color:#888;font-size:12px;margin-bottom:18px">LIVE RACES · UP TO ' + MAX_PLAYERS + ' DRIVERS</div>' +
-      '<div style="display:flex;gap:12px">' +
-      '  <button id="pt-race-create" style="flex:1;background:' + F1_RED + ';color:#fff;border:none;border-radius:6px;padding:14px;font-size:16px;font-weight:bold;cursor:pointer">CREATE RACE</button>' +
-      '  <button id="pt-race-join" style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;padding:14px;font-size:16px;font-weight:bold;cursor:pointer">JOIN RACE</button>' +
-      '</div>' +
-      '<div id="pt-race-join-row" style="display:none;margin-top:14px;display:flex;gap:8px">' +
-      '  <input id="pt-race-code" maxlength="5" placeholder="CODE" style="flex:1;background:#0a0a0a;color:#fff;border:1px solid #333;border-radius:6px;padding:12px;font-size:20px;letter-spacing:6px;text-transform:uppercase;text-align:center" />' +
-      '  <button id="pt-race-go" style="background:' + F1_RED + ';color:#fff;border:none;border-radius:6px;padding:0 22px;font-size:16px;font-weight:bold;cursor:pointer">GO</button>' +
-      '</div>' +
-      '<div style="margin-top:18px;text-align:right"><button id="pt-race-close" style="background:none;border:none;color:#666;font-size:13px;cursor:pointer">back</button></div>',
-      'background:#101014;border:1px solid #2a2a2e;border-radius:12px;padding:28px;width:360px;max-width:92vw');
-    ov.appendChild(panel);
-    document.body.appendChild(ov);
-    panel.querySelector("#pt-race-close").onclick = function () { ov.remove(); };
-    panel.querySelector("#pt-race-join").onclick = function () { panel.querySelector("#pt-race-join-row").style.display = "flex"; panel.querySelector("#pt-race-code").focus(); };
-    panel.querySelector("#pt-race-go").onclick = function () {
-      var code = panel.querySelector("#pt-race-code").value.trim().toUpperCase();
-      if (code.length === 5) joinRoom(code, false);
-    };
-    panel.querySelector("#pt-race-create").onclick = function () {
-      var code = "";
-      var chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-      for (var i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
-      joinRoom(code, true);
-    };
-  }
-
-  function openButton() {
-    if (hubBtn) return;
-    hubBtn = document.createElement("button");
-    hubBtn.className = "pt-race-hub";
-    hubBtn.title = "Grand Prix — multiplayer races";
-    hubBtn.innerHTML = '<span style="font-size:22px;font-weight:900;letter-spacing:2px">GRAND&nbsp;PRIX</span><span style="display:block;font-size:9px;font-weight:700;letter-spacing:3px;opacity:.85;margin-top:2px">MULTIPLAYER</span>';
-    hubBtn.style.cssText = "position:fixed;top:10px;right:10px;z-index:99997;background:linear-gradient(135deg,#e10600,#a30200);color:#fff;border:2px solid #fff;border-radius:10px;padding:12px 20px;text-align:center;cursor:pointer;font-family:sans-serif;box-shadow:0 4px 18px rgba(225,6,0,.45),0 2px 6px rgba(0,0,0,.5);transition:transform .12s ease,box-shadow .12s ease";
-    hubBtn.onmouseover = function () { hubBtn.style.transform = "scale(1.06)"; hubBtn.style.boxShadow = "0 6px 26px rgba(225,6,0,.65),0 3px 8px rgba(0,0,0,.5)"; };
-    hubBtn.onmouseout = function () { hubBtn.style.transform = "scale(1)"; hubBtn.style.boxShadow = "0 4px 18px rgba(225,6,0,.45),0 2px 6px rgba(0,0,0,.5)"; };
-    hubBtn.onclick = openRaceHub;
-    document.body.appendChild(hubBtn);
-  }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", openButton);
-  else openButton();
-
-  // ------------------------------------------------------------ realtime room
-  function joinRoom(code, host) {
-    if (!code || code.length !== 5) { alert("Room code must be 5 characters."); return; }
-    connectRoom(code.toUpperCase(), !!host);
-  }
-  var ws = null, roomCode = null, isHost = false, players = {}, playlist = [], raceIdx = 0, startAt = 0, finished = {};
-  function wsSend(ev, payload) {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: "race:" + roomCode, event: ev, payload: payload }));
-  }
-  function connectRoom(code, host) {
-    roomCode = code; isHost = host;
-    players = {}; finished = {}; playlist = []; raceIdx = 0;
-    if (host) {
-      sb("race_rooms", { method: "POST", prefer: "resolution=ignore-duplicates", body: JSON.stringify({ code: code, host_token: me.id }) })
-        .catch(function (e) { alert("Could not create room (is race_rooms set up in Supabase?)\n" + String(e).slice(0, 200)); });
-    }
-    ws = new WebSocket(SB.replace("http", "ws") + "/realtime/v1/websocket?apikey=" + KEY + "&vsn=1.0.0");
-    ws.onopen = function () {
-      wsSend("phx_join", { topic: "race:" + roomCode, ref: 1, payload: { config: { broadcast: { self: false }, presence: { key: me.id } } } });
-      wsSend("race_join", { player: me });
-      showLobby();
-    };
-    ws.onmessage = function (e) {
-      var m = JSON.parse(e.data);
-      // Supabase Realtime wraps our broadcasts: {event:"broadcast", payload:{type:"broadcast", event:"<ours>", payload:{...}}}
-      if (m.event === "broadcast" && m.payload && m.payload.event) {
-        m.event = m.payload.event;
-        m.payload = m.payload.payload;
-      }
-      if (m.event === "race_join" && m.payload && m.payload.player) players[m.payload.player.id] = m.payload.player;
-      if (m.event === "race_leave" && m.payload) delete players[m.payload.playerId];
-      if (m.event === "race_playlist" && m.payload) { playlist = m.payload.playlist; }
-      if (m.event === "race_start" && m.payload) { startAt = m.payload.startAt; raceIdx = m.payload.raceIdx || 0; showCountdown(m.payload.trackId); }
-      if (m.event === "race_finish" && m.payload) { finished[m.payload.playerId] = m.payload; renderTower(); }
-      if (m.event === "race_next" && m.payload) { finished = {}; raceIdx = m.payload.raceIdx; showCountdown(m.payload.trackId); }
-      if (m.event === "presence_state" || m.event === "presence_diff") syncPresence(m.payload);
-      if (m.event === "phx_reply" && m.payload && m.payload.status === "error") console.warn("[GP]", m.payload);
-    };
-    ws.onclose = function () { if (roomCode) setTimeout(function () { connectRoom(roomCode, isHost); }, 1500); };
-    if (isHost) setTimeout(function () { wsSend("race_playlist", { playlist: playlist }); }, 800);
-  }
-  function syncPresence(p) { /* presence keeps lobby accurate */ if (p) Object.keys(p).forEach(function (k) { if (!players[k]) players[k] = { id: k, name: (p[k].metas && p[k].metas[0] && p[k].metas[0].name) || "Driver" }; renderLobby(); }); }
-
-  // ---------------------------------------------------------------- lobby UI
-  var lobbyEl = null;
-  function showLobby() {
-    hideAll();
-    lobbyEl = raceUI(
-      '<div style="font-weight:900;font-size:22px;color:' + F1_RED + ';letter-spacing:2px">RACE ROOM</div>' +
-      '<div style="font-size:34px;font-weight:900;letter-spacing:10px;margin:8px 0">' + roomCode + '</div>' +
-      '<div style="color:#888;font-size:12px;margin-bottom:14px">share this code · drivers join from the GP button</div>' +
-      '<div id="pt-lobby-list" style="min-height:80px"></div>' +
-      (isHost
-        ? '<div style="color:#888;font-size:11px;margin-top:10px;text-transform:uppercase;letter-spacing:1px">Pick tracks for the Grand Prix</div>' +
-          '<div id="pt-track-list" style="max-height:150px;overflow:auto;margin-top:6px;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px"></div>' +
-          '<div style="display:flex;gap:8px;margin-top:8px">' +
-          '  <button id="pt-track-all" style="flex:1;background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px;font-size:11px;cursor:pointer">SELECT ALL</button>' +
-          '  <button id="pt-track-none" style="flex:1;background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px;font-size:11px;cursor:pointer">CLEAR</button>' +
-          '</div>' +
-          '<div id="pt-playlist-count" style="color:#888;font-size:11px;margin-top:6px">0 tracks selected</div>' +
-          '<button id="pt-start" style="width:100%;margin-top:10px;background:' + F1_RED + ';color:#fff;border:none;border-radius:6px;padding:14px;font-weight:bold;font-size:16px;cursor:pointer">START RACE 1</button>'
-        : '<div style="color:#888;font-size:13px;margin-top:14px">waiting for host to start…</div>') +
-      '<div style="text-align:right;margin-top:8px"><button id="pt-leave" style="background:none;border:none;color:#666;cursor:pointer;font-size:12px">leave</button></div>',
-      'position:fixed;top:50px;right:12px;z-index:99998;background:#101014;border:1px solid #2a2a2e;border-radius:10px;padding:18px;width:300px;font-family:sans-serif');
-    lobbyEl.className = "pt-race-hub";
-    document.body.appendChild(lobbyEl);
-    lobbyEl.querySelector("#pt-leave").onclick = leave;
-    if (isHost) {
-      // Track picker: official tracks grouped by season.
-      var TRACKS = ["summer1","summer2","summer3","summer4","summer5","summer6","summer7",
-                    "winter1","winter2","winter3","winter4",
-                    "desert1","desert2","desert3","desert4"];
-      var listEl = lobbyEl.querySelector("#pt-track-list");
-      var countEl = lobbyEl.querySelector("#pt-playlist-count");
-      function selectedTracks() {
-        return Array.prototype.slice.call(listEl.querySelectorAll("input:checked")).map(function (c) { return c.value; });
-      }
-      function updateCount() { countEl.textContent = selectedTracks().length + " track(s) selected"; }
-      ["SUMMER","WINTER","DESERT"].forEach(function (season) {
-        listEl.appendChild(raceUI('<div style="color:' + F1_RED + ';font-size:10px;font-weight:bold;letter-spacing:2px;margin:6px 0 2px">' + season + '</div>'));
-        TRACKS.filter(function (t) { return t.indexOf(season.toLowerCase()) === 0; }).forEach(function (t) {
-          var row = raceUI('<label style="display:flex;align-items:center;gap:8px;padding:3px 0;color:#fff;font-size:13px;cursor:pointer"><input type="checkbox" value="' + t + '" style="accent-color:' + F1_RED + '" /> ' + t.toUpperCase() + '</label>');
-          listEl.appendChild(row);
-          row.querySelector("input").onchange = updateCount;
-        });
-      });
-      lobbyEl.querySelector("#pt-track-all").onclick = function () { listEl.querySelectorAll("input").forEach(function (c) { c.checked = true; }); updateCount(); };
-      lobbyEl.querySelector("#pt-track-none").onclick = function () { listEl.querySelectorAll("input").forEach(function (c) { c.checked = false; }); updateCount(); };
-      lobbyEl.querySelector("#pt-start").onclick = function () {
-        playlist = selectedTracks();
-        if (!playlist.length) { alert("Select at least one track for the Grand Prix."); return; }
-        wsSend("race_playlist", { playlist: playlist });
-        // self:false means the host won't hear its own broadcast — start locally too.
-        startAt = Date.now() + 6000; raceIdx = 0;
-        showCountdown(playlist[0]);
-        wsSend("race_start", { trackId: playlist[0], raceIdx: 0, startAt: startAt });
-      };
-    }
-    renderLobby();
-  }
-  function renderLobby() {
-    if (!lobbyEl) return;
-    var el = lobbyEl.querySelector("#pt-lobby-list");
-    if (!el) return;
-    el.innerHTML = "";
-    Object.keys(players).forEach(function (id) {
-      var p = players[id];
-      el.appendChild(raceUI('<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1c1c20"><span style="color:#fff">' + (p.name || "Driver") + '</span><span style="color:' + F1_RED + ';font-size:11px">' + (id === (isHost ? me.id : Object.keys(players)[0]) ? "HOST" : "") + '</span></div>'));
-    });
-  }
-
-  // ------------------------------------------------------- countdown + tower
-  var cdEl = null, towerEl = null;
-  function showCountdown(trackId) {
-    hideAll();
-    cdEl = raceUI('', 'position:fixed;inset:0;z-index:99996;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;font-family:sans-serif');
-    cdEl.className = "pt-race-hub";
-    var info = raceUI(
-      '<div style="background:rgba(10,10,14,.85);border:1px solid #2a2a2e;border-radius:10px;padding:18px 34px;text-align:center">' +
-      '<div style="font-size:13px;font-weight:900;letter-spacing:3px;color:#888">RACE ' + ((raceIdx || 0) + 1) + ' OF ' + Math.max(1, playlist.length) + ' · ROOM ' + (roomCode || "—") + '</div>' +
-      '<div style="font-size:34px;font-weight:900;letter-spacing:4px;color:#fff;margin:4px 0 10px">' + (trackId || "track").toUpperCase() + '</div>' +
-      '<div style="font-size:11px;color:#aaa">open the track menu and pick this track · finish your run to report to the tower</div>' +
-      '</div>');
-    cdEl.appendChild(info);
-    var t = raceUI('', 'font-size:120px;font-weight:900;color:' + F1_RED + ';text-shadow:0 0 40px rgba(225,6,0,.5)');
-    cdEl.appendChild(t);
-    document.body.appendChild(cdEl);
-    var iv = setInterval(function () {
-      var left = Math.ceil((startAt - Date.now()) / 1000);
-      t.textContent = left > 0 ? left : "GO!";
-      if (left <= 0) {
-        clearInterval(iv);
-        setTimeout(function () { if (cdEl) { cdEl.remove(); cdEl = null; } }, 1200);
-        autoStartTrack(trackId);
-      }
-    }, 200);
-    // Timing tower
-    towerEl = raceUI('<div style="font-weight:900;font-size:12px;color:' + F1_RED + ';letter-spacing:2px;margin-bottom:6px">LIVE TIMING · ' + (trackId || "").toUpperCase() + '</div><div id="pt-tower"></div>',
-      'position:fixed;top:50px;left:12px;z-index:99996;background:rgba(10,10,14,.92);border:1px solid #2a2a2e;border-radius:8px;padding:12px;width:230px;font-family:sans-serif');
-    towerEl.className = "pt-race-hub";
-    document.body.appendChild(towerEl);
-    renderTower();
-  }
-  // Auto-load the race track: the bundle has no public API, but track buttons exist in
-  // the DOM (.track .button with a .track-title). Poll and click the matching one —
-  // works as soon as the player's track menu is (or gets) open.
-  function autoStartTrack(trackId) {
-    if (!trackId) return;
-    var target = trackId.replace(/[^a-z0-9]/g, "").toLowerCase(); // e.g. summer1 -> summer1
-    var tries = 0;
-    try { window.ptLog && window.ptLog("GP: auto-loading track " + trackId); } catch (e) {}
-    var poll = setInterval(function () {
-      tries++;
-      if (roomCode == null || tries > 120) { clearInterval(poll); return; }
-      var btns = document.querySelectorAll(".menu .track button.button");
-      for (var i = 0; i < btns.length; i++) {
-        var titleEl = btns[i].querySelector(".track-title p");
-        if (!titleEl) continue;
-        var name = (titleEl.textContent || "").replace(/[^a-z0-9]/g, "").toLowerCase();
-        if (name === target) {
-          clearInterval(poll);
-          btns[i].click();
-          try { window.ptLog && window.ptLog("GP: clicked track " + titleEl.textContent); } catch (e) {}
-          return;
-        }
-      }
-      // Track menu not open yet — remind the player once.
-      if (tries === 30 && towerEl) {
-        towerEl.insertAdjacentHTML("beforeend", '<div style="color:#e10600;font-size:10px;margin-top:6px">open the PLAY menu — the track will start automatically</div>');
-      }
-    }, 500);
-  }
-  function renderTower() {
-    if (!towerEl) return;
-    var el = towerEl.querySelector("#pt-tower");
-    var rows = Object.keys(finished).map(function (id) { return { id: id, frames: finished[id].frames, name: finished[id].name || (players[id] && players[id].name) || "Driver" }; });
-    var racing = Object.keys(players).filter(function (id) { return !finished[id]; });
-    racing.forEach(function (id) { rows.push({ id: id, frames: null, name: (players[id] && players[id].name) || "Driver" }); });
-    rows.sort(function (a, b) { return (a.frames == null ? 9e9 : a.frames) - (b.frames == null ? 9e9 : b.frames); });
-    el.innerHTML = "";
-    rows.forEach(function (r, i) {
-      var gap = r.frames == null ? "ON TRACK" : (i === 0 ? "LEADER" : "+" + ((r.frames - rows[0].frames) / 60).toFixed(3));
-      var col = r.id === me.id ? F1_RED : "#fff";
-      el.appendChild(raceUI('<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:' + col + '">' + (i + 1) + '. ' + r.name + '</span><span style="color:#aaa;font-size:11px">' + gap + '</span></div>'));
-    });
-  }
-
-  // -------------------------------------------------------- finish reporting
-  // The shim calls this after a successful run upload so finishes land in the tower.
-  window.ptRaceFinish = function (trackId, frames, name) {
-    if (!roomCode || !ws) return;
-    var payload = { playerId: me.id, trackId: trackId, frames: frames, name: name || me.name };
-    wsSend("race_finish", payload);
-    finished[me.id] = payload;
-    renderTower();
-  };
-  function leave() {
-    if (ws) { wsSend("race_leave", { playerId: me.id }); ws.close(); }
-    ws = null; roomCode = null; players = {}; finished = {}; hideAll(); openButton();
-  }
-  function hideAll() {
-    document.querySelectorAll(".pt-race-hub").forEach(function (n) { if (n !== hubBtn) n.remove(); });
-    lobbyEl = null; cdEl = null; towerEl = null;
-    if (hubBtn) hubBtn.style.display = "none";
-  }
-})();
-</script><script defer src="error_screen.bundle.js"></script><script defer src="main.bundle.js"></script></head><body><canvas id="screen"></canvas><div id="ui"></div><div id="transition-layer"></div></body></html>
+  }})();
+</script><script src="bot.js"></script><script defer src="error_screen.bundle.js"></script><script defer src="main.bundle.js"></script></head><body><canvas id="screen"></canvas><div id="ui"></div><div id="transition-layer"></div></body></html>
